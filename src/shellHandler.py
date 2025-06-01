@@ -40,49 +40,88 @@ def getFolder():
     except FileNotFoundError:
         pop("PyWall.exe not found",
             "Could not find PyWall, please open the program and try again.", True)
+    except OSError as e: # Catch other potential OS errors during file read
+        pop(f"Error reading script folder: {type(e).__name__}",
+            f"Could not read PyWall's location. Details: {e}", True)
+    return None # Ensure None is returned on error
 
 
 def allowAccess(filenames, params):
     folder = getFolder()
+    if not folder: # Explicitly check if folder is None
+        # pop message already shown by getFolder() if it failed to find the file
+        return
+
     try:
-        if pyWallPath(folder).is_file() or pyWallScript(folder).is_file():
-            subprocess.call(
-                f'cmd /c cd "{folder}" && PyWall.exe -file "{filenames}" -allow true -rule_type {params}', shell=True)
-            # input() #
-            subprocess.call(
-                f'cmd /c cd "{folder}" && python "{folder}\\main.py" -file "{filenames}" -allow true -rule_type {params}', shell=True)
-            # input() #
+        # Ensure paths are constructed safely, even if folder name might be unusual
+        pywall_exe_path = pyWallPath(folder)
+        main_py_path = pyWallScript(folder)
+
+        if pywall_exe_path.is_file() or main_py_path.is_file():
+            # Determine which command to use (prefer exe if available)
+            if pywall_exe_path.is_file():
+                command_parts = [str(pywall_exe_path), "-file", str(filenames), "-allow", "true", "-rule_type", str(params)]
+                # Use subprocess.run for better control and error handling if needed in future.
+                # For now, sticking to subprocess.call as per original code, but with direct executable call.
+                subprocess.call(f'cmd /c cd "{folder}" && PyWall.exe -file "{filenames}" -allow true -rule_type {params}', shell=True)
+
+            elif main_py_path.is_file(): # Fallback to python script
+                subprocess.call(f'cmd /c cd "{folder}" && python "{main_py_path}" -file "{filenames}" -allow true -rule_type {params}', shell=True)
         else:
-            os.remove(getScriptFolder())
-            pop("PyWall.exe not found",
-                "Could not find PyWall, please open the program and try again.", True)
-    except FileNotFoundError:
-        pop("PyWall.exe not found",
-            "Could not find PyWall, please open the program and try again.", True)
+            # This case implies getFolder() found Executable.txt but PyWall.exe/main.py is missing from that location.
+            if os.path.exists(getScriptFolder()): # Check before removing
+                 os.remove(getScriptFolder())
+            pop("PyWall application not found",
+                "PyWall.exe or main.py is missing from the recorded location. Please reinstall or reconfigure.", True)
+
+    except FileNotFoundError: # Should ideally be caught by getFolder or path checks
+        pop("PyWall application path error",
+            "A FileNotFoundError occurred while trying to run PyWall. Please check installation.", True)
+    except PermissionError:
+        pop("Permission Denied",
+            "Permission denied when trying to execute PyWall.", True)
+    except subprocess.SubprocessError as spe:
+         pop("Subprocess Error",
+            f"Failed to run PyWall. Details: {spe}", True)
+    except Exception as e: # General fallback
+        pop("Error allowing access",
+            f"An unexpected error occurred: {e}", True)
 
 
 def denyAccess(filenames, params):
     folder = getFolder()
+    if not folder:
+        return
+
     try:
-        if pyWallPath(folder).is_file() or pyWallScript(folder).is_file():
-            subprocess.call(
-                f'cmd /c cd "{folder}" && PyWall.exe -file "{filenames}" -allow false -rule_type {params}', shell=True)
-            # input() #
-            subprocess.call(
-                f'cmd /c cd "{folder}" && python "{folder}\\main.py" -file "{filenames}" -allow false -rule_type {params}', shell=True)
-            # input() #
+        pywall_exe_path = pyWallPath(folder)
+        main_py_path = pyWallScript(folder)
+
+        if pywall_exe_path.is_file() or main_py_path.is_file():
+            if pywall_exe_path.is_file():
+                 subprocess.call(f'cmd /c cd "{folder}" && PyWall.exe -file "{filenames}" -allow false -rule_type {params}', shell=True)
+            elif main_py_path.is_file():
+                 subprocess.call(f'cmd /c cd "{folder}" && python "{main_py_path}" -file "{filenames}" -allow false -rule_type {params}', shell=True)
+
         else:
-            os.remove(getScriptFolder())
-            pop("PyWall.exe not found",
-                "Could not find PyWall, please open the program and try again.", True)
+            if os.path.exists(getScriptFolder()):
+                os.remove(getScriptFolder())
+            pop("PyWall application not found",
+                "PyWall.exe or main.py is missing from the recorded location. Please reinstall or reconfigure.", True)
+
     except FileNotFoundError:
-        pop("PyWall.exe not found",
-            "Could not find PyWall, please open the program and try again.", True)
+        pop("PyWall application path error",
+            "A FileNotFoundError occurred while trying to run PyWall. Please check installation.", True)
+    except PermissionError:
+        pop("Permission Denied",
+            "Permission denied when trying to execute PyWall.", True)
+    except subprocess.SubprocessError as spe:
+         pop("Subprocess Error",
+            f"Failed to run PyWall. Details: {spe}", True)
+    except Exception as e:
+        pop("Error denying access",
+            f"An unexpected error occurred: {e}", True)
 
-
-# This creates the context menu, It is important to do this for FILES and for DIRECTORY so that the user can right #
-# click on either. The keys created are in "HKEY_CURRENT_USER\Software\Classes\*\shell\" for FILES and in #
-# "HKEY_CURRENT_USER\Software\Classes\Directory\shell" for DIRECTORY #
 
 def createInternetAccessMenu():
     IAM = menus.ContextMenu('PyWall', type='FILES')
@@ -126,21 +165,29 @@ def createDenyMenu():
 
 def updateRegistry():
     import winreg
-    # Command registry #
-    # Yes, this was just as tedious as you think it was #
-    FILES_ALLOW_BOTH = r"Software\Classes\*\shell\PyWall\shell\Allow Internet Access\shell\Allow inbound " \
-                       r"and outbound connections\command"
-    FILES_ALLOW_IN = r"Software\Classes\*\shell\PyWall\shell\Allow Internet Access\shell\Allow inbound " \
-                     r"connections\command"
-    FILES_ALLOW_OUT = r"Software\Classes\*\shell\PyWall\shell\Allow Internet Access\shell\Allow outbound " \
-                      r"connections\command"
-    FILES_DENY_BOTH = r"Software\Classes\*\shell\PyWall\shell\Deny Internet Access\shell\Deny inbound " \
-                      r"and outbound connections\command"
-    FILES_DENY_IN = r"Software\Classes\*\shell\PyWall\shell\Deny Internet Access\shell\Deny inbound " \
-                    r"connections\command"
-    FILES_DENY_OUT = r"Software\Classes\*\shell\PyWall\shell\Deny Internet Access\shell\Deny outbound " \
-                     r"connections\command"
-    # ---- #
+
+    # Attempt to import logException and actionLogger, assuming they're in src.logger
+    # Fallback definitions if import fails, to prevent NameError
+    try:
+        from src.logger import logException, actionLogger
+    except ImportError:
+        print("Warning: src.logger.logException or actionLogger not found. Using fallback print statements for logging.")
+        def logException(e, message=""):
+            if message:
+                print(f"LOG_EXCEPTION: {message} - {type(e).__name__}: {e}")
+            else:
+                print(f"LOG_EXCEPTION: {type(e).__name__}: {e}")
+
+        def actionLogger(message):
+            print(f"ACTION_LOGGER: {message}")
+
+    FILES_ALLOW_BOTH = r"Software\Classes\*\shell\PyWall\shell\Allow Internet Access\shell\Allow inbound and outbound connections\command"
+    FILES_ALLOW_IN = r"Software\Classes\*\shell\PyWall\shell\Allow Internet Access\shell\Allow inbound connections\command"
+    FILES_ALLOW_OUT = r"Software\Classes\*\shell\PyWall\shell\Allow Internet Access\shell\Allow outbound connections\command"
+    FILES_DENY_BOTH = r"Software\Classes\*\shell\PyWall\shell\Deny Internet Access\shell\Deny inbound and outbound connections\command"
+    FILES_DENY_IN = r"Software\Classes\*\shell\PyWall\shell\Deny Internet Access\shell\Deny inbound connections\command"
+    FILES_DENY_OUT = r"Software\Classes\*\shell\PyWall\shell\Deny Internet Access\shell\Deny outbound connections\command"
+
     DIR_ALLOW_BOTH = FILES_ALLOW_BOTH.replace("*", "Directory")
     DIR_ALLOW_IN = FILES_ALLOW_IN.replace("*", "Directory")
     DIR_ALLOW_OUT = FILES_ALLOW_OUT.replace("*", "Directory")
@@ -149,53 +196,139 @@ def updateRegistry():
     DIR_DENY_OUT = FILES_DENY_OUT.replace("*", "Directory")
 
     key = winreg.HKEY_CURRENT_USER
-    sub_keys = [
+    sub_keys_to_modify = [
         FILES_ALLOW_BOTH, FILES_DENY_BOTH, FILES_ALLOW_IN, FILES_DENY_IN, FILES_ALLOW_OUT, FILES_DENY_OUT,
         DIR_ALLOW_BOTH, DIR_DENY_BOTH, DIR_ALLOW_IN, DIR_DENY_IN, DIR_ALLOW_OUT, DIR_DENY_OUT
     ]
 
-    # Icon registry #
-    PYWALL_REG_FILE = r"Software\Classes\*\shell\PyWall"
-    PYWALL_REG_FOLDER = r"Software\Classes\Directory\shell\PyWall"
+    PYWALL_REG_FILE_ICON_KEY = r"Software\Classes\*\shell\PyWall"
+    PYWALL_REG_FOLDER_ICON_KEY = r"Software\Classes\Directory\shell\PyWall"
 
     try:
-        # This key will only work if run from an executable, and not if it is run from source #
         folder = getFolder()
+        if not folder:
+            message = "Could not get folder path. Skipping registry updates."
+            actionLogger(message)
+            # Consider a more visible warning to the user if this is critical
+            # For now, just logging and exiting the function.
+            return
+
+        icon_path = str(pyWallPath(folder)) + ",0"
+
+        # Icon setting for files
         try:
-            PYWALL_KEY = winreg.OpenKey(
-                key, PYWALL_REG_FILE, 0, winreg.KEY_ALL_ACCESS)
-            winreg.SetValueEx(PYWALL_KEY, 'Icon', 0, winreg.REG_SZ,
-                              str(pyWallPath(folder)) + ",0")
-            winreg.CloseKey(PYWALL_KEY)
+            with winreg.OpenKey(key, PYWALL_REG_FILE_ICON_KEY, 0, winreg.KEY_WRITE) as pywall_key_handle:
+                winreg.SetValueEx(pywall_key_handle, 'Icon', 0, winreg.REG_SZ, icon_path)
+        except FileNotFoundError:
+            msg = f"Registry key {PYWALL_REG_FILE_ICON_KEY} not found. Cannot set file icon."
+            actionLogger(msg) # Use actionLogger for less severe, potentially expected issues
+            logException(FileNotFoundError(msg), msg) # Log with exception type
+        except PermissionError as pe:
+            msg = f"Permission denied for registry key {PYWALL_REG_FILE_ICON_KEY} (file icon)."
+            actionLogger(msg)
+            logException(pe, msg)
+        except OSError as oe:
+            msg = f"OSError for registry key {PYWALL_REG_FILE_ICON_KEY} (file icon): {oe}"
+            actionLogger(msg)
+            logException(oe, msg)
         except Exception as e:
-            print(f"Warning: Could not set file icon: {e}")
+            msg = f"Unexpected error for registry key {PYWALL_REG_FILE_ICON_KEY} (file icon): {e}"
+            actionLogger(msg)
+            logException(e, msg)
 
+        # Icon setting for folders
         try:
-            PYWALL_FOLDER_KEY = winreg.OpenKey(
-                key, PYWALL_REG_FOLDER, 0, winreg.KEY_ALL_ACCESS)
-            winreg.SetValueEx(PYWALL_FOLDER_KEY, 'Icon', 0,
-                              winreg.REG_SZ, str(pyWallPath(folder)) + ",0")
-            winreg.CloseKey(PYWALL_FOLDER_KEY)
+            with winreg.OpenKey(key, PYWALL_REG_FOLDER_ICON_KEY, 0, winreg.KEY_WRITE) as pywall_folder_key_handle:
+                winreg.SetValueEx(pywall_folder_key_handle, 'Icon', 0, winreg.REG_SZ, icon_path)
+        except FileNotFoundError:
+            msg = f"Registry key {PYWALL_REG_FOLDER_ICON_KEY} not found. Cannot set folder icon."
+            actionLogger(msg)
+            logException(FileNotFoundError(msg), msg)
+        except PermissionError as pe:
+            msg = f"Permission denied for registry key {PYWALL_REG_FOLDER_ICON_KEY} (folder icon)."
+            actionLogger(msg)
+            logException(pe, msg)
+        except OSError as oe:
+            msg = f"OSError for registry key {PYWALL_REG_FOLDER_ICON_KEY} (folder icon): {oe}"
+            actionLogger(msg)
+            logException(oe, msg)
         except Exception as e:
-            print(f"Warning: Could not set folder icon: {e}")
+            msg = f"Unexpected error for registry key {PYWALL_REG_FOLDER_ICON_KEY} (folder icon): {e}"
+            actionLogger(msg)
+            logException(e, msg)
 
-        for x in sub_keys:
-            current_sub_key = winreg.QueryValue(key, x)
-            arg_index = winreg.QueryValue(key, x).index(" -c ")
-            current_sub_key = current_sub_key.replace(
-                r"([' '.join(sys.argv[1:]) ],'", ",").replace("')\"", ",")
-            # About the dumbest way to query for the third semicolon #
-            firstSemi = current_sub_key.find(";")
-            secondSemi = current_sub_key.find(";", firstSemi + 1)
-            thirdSemi = current_sub_key.find(";", secondSemi + 1)
-            # The context menu must be tested with a compiled version of PyWall, otherwise it won't work #
-            # PR's that address this are welcome #
-            replacement_sub_key = current_sub_key[:arg_index +
-                                                  4] + current_sub_key[thirdSemi + 1:]
-            winreg.SetValue(key, x, winreg.REG_SZ, replacement_sub_key)
+        # Modifying command sub_keys
+        for reg_path in sub_keys_to_modify:
+            try:
+                # Open with write access, ensure key exists or handle FileNotFoundError
+                with winreg.OpenKey(key, reg_path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as sub_key_handle:
+                    current_value, reg_type = winreg.QueryValueEx(sub_key_handle, None) # Read default value
 
-    except Exception as e:
-        print(f"Error updating registry: {e}")
+                    if reg_type != winreg.REG_SZ:
+                        msg = f"Registry value for {reg_path} is not REG_SZ. Skipping modification."
+                        actionLogger(msg)
+                        continue
+
+                    if ' -c ' not in current_value:
+                        msg = f"Registry value for {reg_path} does not contain ' -c '. Skipping modification."
+                        actionLogger(msg)
+                        continue
+
+                    arg_index = current_value.index(" -c ")
+
+                    modified_value = current_value.replace(
+                        r"([' '.join(sys.argv[1:]) ],'", ",").replace("')\"", ",")
+
+                    # Validate semicolon positions before slicing
+                    semicolon_indices = [i for i, char in enumerate(modified_value) if char == ';']
+                    if len(semicolon_indices) < 3:
+                        msg = f"Malformed registry value (not enough semicolons) for {reg_path}. Value: '{modified_value}'. Skipping."
+                        actionLogger(msg)
+                        continue
+
+                    thirdSemi_idx = semicolon_indices[2]
+
+                    replacement_value = modified_value[:arg_index + 4] + modified_value[thirdSemi_idx + 1:]
+                    winreg.SetValueEx(sub_key_handle, None, 0, winreg.REG_SZ, replacement_value)
+
+            except FileNotFoundError:
+                msg = f"Command registry key {reg_path} not found. Cannot update."
+                actionLogger(msg)
+                logException(FileNotFoundError(msg), msg)
+            except PermissionError as pe:
+                msg = f"Permission denied for command registry key: {reg_path}."
+                actionLogger(msg)
+                logException(pe, msg)
+            except ValueError as ve:
+                msg = f"ValueError processing registry key {reg_path} (e.g., substring not found): {ve}."
+                actionLogger(msg)
+                logException(ve, msg)
+            except OSError as oe:
+                msg = f"OSError for command registry key {reg_path}: {oe}."
+                actionLogger(msg)
+                logException(oe, msg)
+            except Exception as e:
+                msg = f"Unexpected error for command registry key {reg_path}: {e}."
+                actionLogger(msg)
+                logException(e, msg)
+
+    except FileNotFoundError as fnfe_outer:
+        # This would likely be from getFolder() if it raised instead of returning None and printing
+        msg = f"Outer FileNotFoundError in updateRegistry (likely from getFolder): {fnfe_outer}"
+        actionLogger(msg) # Or print if actionLogger itself failed to load
+        logException(fnfe_outer, msg)
+    except PermissionError as pe_outer:
+        msg = f"Outer PermissionError in updateRegistry: {pe_outer}"
+        actionLogger(msg)
+        logException(pe_outer, msg)
+    except OSError as oe_outer:
+        msg = f"Outer OSError in updateRegistry: {oe_outer}"
+        actionLogger(msg)
+        logException(oe_outer, msg)
+    except Exception as e_outer: # Catch-all for the entire updateRegistry function
+        msg = f"A major unexpected error occurred in updateRegistry: {e_outer}"
+        actionLogger(msg) # Or print as last resort
+        logException(e_outer, msg)
 
 
 def removeInternetAccessMenu():
